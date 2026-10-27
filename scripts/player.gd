@@ -1,18 +1,13 @@
 extends CharacterBody3D
 class_name RPGPlayer
-
-## Third-person/isometric 3D movement controller with click-to-move.
 signal arrived_at_destination
-
 @export var move_speed: float = 5.2
 @export var click_arrival_radius: float = 0.16
 var destination: Vector3
 var click_move_enabled := true
 var movement_locked := false
-
 func _ready() -> void:
 	destination = global_position
-
 func _physics_process(_delta: float) -> void:
 	if movement_locked:
 		velocity = Vector3.ZERO
@@ -33,13 +28,8 @@ func _physics_process(_delta: float) -> void:
 			if offset.length() <= click_arrival_radius:
 				arrived_at_destination.emit()
 	move_and_slide()
-	if is_on_floor():
-		global_position.y = 0.0
-
 func set_destination(world_position: Vector3) -> void:
-	destination = world_position
-	destination.y = 0.0
-
+	destination = Vector3(world_position.x, 0.0, world_position.z)
 func stop() -> void:
 	destination = global_position
 	velocity = Vector3.ZERO
