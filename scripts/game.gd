@@ -1,25 +1,26 @@
-extends Node2D
+extends Node3D
 
-## Narrative RPG vertical slice: exploration, dialogue, skill checks, inventory,
-## journal, character sheet, interactables and JSON save/load.
+## 3D narrative RPG vertical slice: isometric exploration, dialogue, skill checks,
+## inventory, journal and JSON save/load.
 
 const SAVE_PATH := "user://pale_district_save.json"
-const WORLD_SIZE := Vector2(1440, 900)
-const INTERACTION_RANGE := 92.0
+const INTERACTION_RANGE := 3.2
 
 @onready var player: RPGPlayer = $Player
+var camera: Camera3D
+var world_root: Node3D
+var npc_nodes: Dictionary = {}
 
 var skills := {"Empathy": 3, "Logic": 2, "Rhetoric": 3, "Perception": 4, "Composure": 2, "Inland Empire": 3}
 var money := 12
 var inventory: Array[String] = ["Cracked notebook", "Cigarette packet"]
 var journal: Array[String] = ["Find out why the waterfront is sealed."]
 var flags: Dictionary = {}
-var current_panel: String = ""
-var current_dialogue: String = ""
-var current_speaker: String = ""
+var current_panel := ""
+var current_dialogue := ""
+var current_speaker := ""
 var dialogue_lines: Array[String] = []
 var dialogue_choices: Array[Dictionary] = []
-var current_line := 0
 var toast_text := ""
 var toast_time := 0.0
 var hovered_target := ""
@@ -32,25 +33,29 @@ var interaction_hint: Label
 var dialogue_active := false
 
 var people := {
-	"mara": {"name": "Mara Venn", "position": Vector2(770, 370), "color": Color("#c87960"), "description": "A dockworker with tired eyes and a careful voice."},
-	"keeper": {"name": "The Kiosk Keeper", "position": Vector2(1080, 570), "color": Color("#91a58b"), "description": "A quiet person behind a rain-stained kiosk."},
-	"witness": {"name": "Silent Witness", "position": Vector2(300, 310), "color": Color("#8b91b0"), "description": "Someone watching the empty street."}
+	"mara": {"name": "Mara Venn", "position": Vector3(-2.5, 0.0, -1.0), "color": Color("#c87960"), "description": "A dockworker with tired eyes and a careful voice."},
+	"keeper": {"name": "The Kiosk Keeper", "position": Vector3(8.0, 0.0, 5.0), "color": Color("#91a58b"), "description": "A quiet person behind a rain-stained kiosk."},
+	"witness": {"name": "Silent Witness", "position": Vector3(-8.0, 0.0, -5.0), "color": Color("#8b91b0"), "description": "Someone watching the empty street."}
 }
 
 func _ready() -> void:
+	_build_world()
+	_build_camera()
 	_build_ui()
 	_refresh_hud()
-	queue_redraw()
-	show_toast("THE PALE DISTRICT  •  DEMO BUILD")
+	show_toast("THE PALE DISTRICT  •  3D DEMO BUILD")
 	_add_journal_once("Speak to Mara Venn by the waterfront.")
-	set_process(true)
 
 func _process(delta: float) -> void:
 	if toast_time > 0.0:
 		toast_time -= delta
 		if toast_time <= 0.0 and is_instance_valid(status_label):
 			status_label.text = _status_text()
-	queue_redraw()
+	if is_instance_valid(camera) and is_instance_valid(player):
+		var focus := player.global_position + Vector3(0, 0.6, 0)
+		camera.global_position = focus + Vector3(13.0, 17.0, 13.0)
+		camera.look_at(focus, Vector3.UP)
+	_update_hover()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact"):
@@ -71,165 +76,187 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("quick_load"):
 		load_game()
 		get_viewport().set_input_as_handled()
-	elif event is InputEventMouseButton and event.pressed:
-		if current_panel != "" and event.button_index == MOUSE_BUTTON_LEFT:
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if current_panel != "" or dialogue_active:
 			return
-		if event.button_index == MOUSE_BUTTON_RIGHT:
-			player.set_destination(get_global_mouse_position().clamp(Vector2(40, 100), Vector2(1400, 860)))
-		elif event.button_index == MOUSE_BUTTON_LEFT and not dialogue_active:
-			var target := _target_at(get_global_mouse_position())
-			if target != "":
-				_try_interact(target)
-			else:
-				player.set_destination(get_global_mouse_position().clamp(Vector2(40, 100), Vector2(1400, 860)))
+		var target := _raycast_target(event.position)
+		if target != "":
+			_try_interact(target)
+		else:
+			var destination := _ground_point(event.position)
+			if destination != Vector3.INF:
+				player.set_destination(destination)
 
-func _draw() -> void:
-	# Hand-painted placeholder blockout: replace with authored tiles, props and lighting.
-	draw_rect(Rect2(Vector2.ZERO, WORLD_SIZE), Color("#252a2b"))
-	draw_rect(Rect2(0, 95, 1440, 805), Color("#343a38"))
-	# Wet street and waterfront
-	draw_rect(Rect2(0, 95, 1440, 105), Color("#283e43"))
-	for x in range(0, 1440, 70):
-		draw_line(Vector2(x, 145), Vector2(x + 42, 145), Color("#597074", 0.28), 2.0)
-	# Streets
-	draw_rect(Rect2(0, 430, 1440, 150), Color("#4b4c45"))
-	draw_rect(Rect2(0, 488, 1440, 3), Color("#b5a77e", 0.28), 2.0)
-	# Buildings and facades
-	_draw_building(Rect2(70, 230, 270, 165), Color("#67584f"), "OLD MUNICIPAL OFFICE")
-	_draw_building(Rect2(420, 230, 245, 165), Color("#555d58"), "CLOSED HOTEL")
-	_draw_building(Rect2(890, 250, 300, 140), Color("#756a58"), "FERRY ADMINISTRATION")
-	_draw_building(Rect2(920, 640, 270, 140), Color("#57504a"), "KIOSK / 24H")
-	# Pavement details
-	for i in range(12):
-		var px := 80.0 + i * 105.0
-		draw_line(Vector2(px, 595), Vector2(px + 40, 595), Color("#d3c5a1", 0.12), 2.0)
-	# Interaction markers
+func _build_world() -> void:
+	world_root = Node3D.new()
+	world_root.name = "World"
+	add_child(world_root)
+	_add_box("Ground", Vector3(0, -0.35, 0), Vector3(34, 0.6, 28), Color("#343a38"))
+	_add_box("Waterfront", Vector3(0, -0.02, -11.2), Vector3(34, 0.12, 5.0), Color("#283e43"))
+	_add_box("Wet Road", Vector3(0, 0.015, 2.0), Vector3(34, 0.08, 5.0), Color("#4b4c45"))
+	_add_box("Pavement", Vector3(0, 0.02, 6.5), Vector3(34, 0.1, 2.2), Color("#55534b"))
+	for i in range(15):
+		_add_box("Road Mark %02d" % i, Vector3(-15.5 + i * 2.2, 0.07, 2.0), Vector3(1.0, 0.015, 0.045), Color("#b5a77e", 0.42))
+	_add_building("OLD MUNICIPAL OFFICE", Vector3(-10, 1.4, -6.3), Vector3(5.0, 2.8, 4.0), Color("#67584f"))
+	_add_building("CLOSED HOTEL", Vector3(-3.5, 1.8, -6.5), Vector3(5.2, 3.6, 4.0), Color("#555d58"))
+	_add_building("FERRY ADMINISTRATION", Vector3(5.2, 1.5, -6.3), Vector3(6.0, 3.0, 4.2), Color("#756a58"))
+	_add_building("KIOSK / 24H", Vector3(10.5, 1.0, 8.5), Vector3(4.2, 2.0, 3.0), Color("#57504a"))
+	_add_box("Pier", Vector3(-1.5, 0.06, -9.0), Vector3(8.0, 0.15, 1.5), Color("#625747"))
 	for key in people:
-		var person: Dictionary = people[key]
-		var p: Vector2 = person["position"]
-		draw_circle(p + Vector2(0, 7), 17, Color(0, 0, 0, 0.25))
-		draw_circle(p, 13, person["color"])
-		draw_circle(p + Vector2(0, -16), 8, Color("#c9b69d"))
-		draw_arc(p + Vector2(0, -16), 8, PI, TAU, 16, Color("#27292a"), 4)
-		draw_string(ThemeDB.fallback_font, p + Vector2(-58, -34), person["name"], HORIZONTAL_ALIGNMENT_CENTER, 116, 13, Color("#e6ddc9"))
-		if key == hovered_target:
-			draw_arc(p, 24, 0, TAU, 28, Color("#e3c28a"), 2.0)
-	# Aim marker
-	if player and player.destination.distance_to(player.global_position) > 18:
-		draw_arc(player.destination, 8, 0, TAU, 18, Color("#d9c28f", 0.8), 2.0)
+		var info: Dictionary = people[key]
+		var npc := _make_npc(key, info)
+		world_root.add_child(npc)
+		npc_nodes[key] = npc
+	var env := WorldEnvironment.new()
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_SKY
+	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	environment.ambient_light_color = Color("#aab4b2")
+	environment.ambient_light_energy = 0.65
+	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.environment = environment
+	add_child(env)
+	var sun := DirectionalLight3D.new()
+	sun.name = "Overcast Sun"
+	sun.rotation_degrees = Vector3(-48, -28, 0)
+	sun.light_color = Color("#e2d7bd")
+	sun.light_energy = 0.8
+	sun.shadow_enabled = true
+	add_child(sun)
 
-func _draw_building(rect: Rect2, color: Color, title: String) -> void:
-	draw_rect(Rect2(rect.position + Vector2(6, 8), rect.size), Color(0, 0, 0, 0.25))
-	draw_rect(rect, color)
-	draw_rect(Rect2(rect.position, Vector2(rect.size.x, 12)), color.lightened(0.13))
-	for x in range(int(rect.position.x + 20), int(rect.end.x - 10), 48):
-		draw_rect(Rect2(x, rect.position.y + 32, 24, 36), Color("#252e30"))
-		draw_rect(Rect2(x + 3, rect.position.y + 35, 18, 30), Color("#7c958d", 0.5))
-	draw_string(ThemeDB.fallback_font, rect.position + Vector2(12, rect.size.y - 14), title, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 20, 12, Color("#e3d8c4"))
+func _build_camera() -> void:
+	camera = Camera3D.new()
+	camera.name = "IsometricCamera"
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.size = 23.0
+	camera.current = true
+	add_child(camera)
 
-func _build_ui() -> void:
-	ui_layer = CanvasLayer.new()
-	add_child(ui_layer)
-	var root := Control.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui_layer.add_child(root)
+func _add_box(box_name: String, pos: Vector3, size: Vector3, color: Color) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.name = box_name
+	body.position = pos
+	world_root.add_child(body)
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = size
+	mesh_instance.mesh = mesh
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.88
+	mesh_instance.material_override = material
+	body.add_child(mesh_instance)
+	var collision := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	collision.shape = shape
+	body.add_child(collision)
+	return body
 
-	var top := PanelContainer.new()
-	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	top.offset_bottom = 82
-	top.add_theme_stylebox_override("panel", _style(Color("#191d20"), Color("#6e6b5b"), 1, 0))
-	root.add_child(top)
-	var top_row := HBoxContainer.new()
-	top_row.add_theme_constant_override("separation", 24)
-	top.add_child(top_row)
-	var title := Label.new()
-	title.text = "THE PALE DISTRICT"
-	title.add_theme_font_size_override("font_size", 22)
-	title.add_theme_color_override("font_color", Color("#d7c59e"))
-	top_row.add_child(title)
-	var subtitle := Label.new()
-	subtitle.text = "A NARRATIVE RPG TEMPLATE  /  DAY 01"
-	subtitle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	subtitle.add_theme_color_override("font_color", Color("#9da39a"))
-	top_row.add_child(subtitle)
-	var controls := Label.new()
-	controls.text = "WASD move  •  LMB walk/interact  •  E talk  •  J journal  •  I inventory  •  C skills  •  F5 save"
-	controls.add_theme_color_override("font_color", Color("#c6c3b7"))
-	top_row.add_child(controls)
+func _add_building(label: String, pos: Vector3, size: Vector3, color: Color) -> void:
+	var body := _add_box(label, pos, size, color)
+	var roof := _add_box(label + " Roof", pos + Vector3(0, size.y / 2.0 + 0.08, 0), Vector3(size.x + 0.25, 0.16, size.z + 0.25), color.lightened(0.12))
+	# Roof is intentionally a simple blockout mesh for easy replacement with authored art.
+	for x in range(int(size.x / 1.4)):
+		var wx := pos.x - size.x / 2.0 + 0.8 + x * 1.4
+		_add_box(label + " Window %d" % x, Vector3(wx, pos.y + 0.1, pos.z + size.z / 2.0 + 0.012), Vector3(0.55, 0.75, 0.035), Color("#263235"))
+		_add_box(label + " Window Glow %d" % x, Vector3(wx, pos.y + 0.1, pos.z + size.z / 2.0 + 0.035), Vector3(0.4, 0.58, 0.02), Color("#7c958d", 0.65))
 
-	objective_label = Label.new()
-	objective_label.position = Vector2(28, 106)
-	objective_label.text = "CURRENT TASK  /  Find Mara Venn"
-	objective_label.add_theme_font_size_override("font_size", 16)
-	objective_label.add_theme_color_override("font_color", Color("#e3c994"))
-	root.add_child(objective_label)
+func _make_npc(key: String, info: Dictionary) -> Node3D:
+	var root := StaticBody3D.new()
+	root.name = key
+	root.position = info["position"]
+	root.add_to_group("interactable")
+	var capsule := MeshInstance3D.new()
+	var mesh := CapsuleMesh.new()
+	mesh.radius = 0.32
+	mesh.height = 1.55
+	capsule.mesh = mesh
+	capsule.position.y = 0.78
+	var material := StandardMaterial3D.new()
+	material.albedo_color = info["color"]
+	material.roughness = 0.92
+	capsule.material_override = material
+	root.add_child(capsule)
+	var collision := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.radius = 0.34
+	shape.height = 1.6
+	collision.shape = shape
+	collision.position.y = 0.8
+	root.add_child(collision)
+	var head := MeshInstance3D.new()
+	var head_mesh := SphereMesh.new()
+	head_mesh.radius = 0.22
+	head_mesh.height = 0.44
+	head.mesh = head_mesh
+	head.position.y = 1.72
+	var head_mat := StandardMaterial3D.new()
+	head_mat.albedo_color = Color("#c9b69d")
+	head.material_override = head_mat
+	root.add_child(head)
+	var name_tag := Label3D.new()
+	name_tag.text = str(info["name"])
+	name_tag.position.y = 2.25
+	name_tag.font_size = 32
+	name_tag.pixel_size = 0.006
+	name_tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	name_tag.modulate = Color("#e6ddc9")
+	root.add_child(name_tag)
+	return root
 
-	interaction_hint = Label.new()
-	interaction_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	interaction_hint.position = Vector2(28, -48)
-	interaction_hint.text = "Right-click to move • Approach a person and press E"
-	interaction_hint.add_theme_color_override("font_color", Color("#e3ddcb"))
-	root.add_child(interaction_hint)
+func _update_hover() -> void:
+	var target := _raycast_target(get_viewport().get_mouse_position())
+	if target != hovered_target:
+		hovered_target = target
+		for key in npc_nodes:
+			var node: Node3D = npc_nodes[key]
+			var mesh_instance: MeshInstance3D = node.get_child(0)
+			var mat: StandardMaterial3D = mesh_instance.material_override
+			mat.emission_enabled = key == hovered_target
+			mat.emission = Color("#d0b783")
+			mat.emission_energy_multiplier = 0.4
 
-	status_label = Label.new()
-	status_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	status_label.position = Vector2(-330, -45)
-	status_label.size = Vector2(300, 28)
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	status_label.add_theme_color_override("font_color", Color("#d6c7a5"))
-	root.add_child(status_label)
+func _raycast_target(screen_pos: Vector2) -> String:
+	var origin := camera.project_ray_origin(screen_pos)
+	var direction := camera.project_ray_normal(screen_pos)
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + direction * 100.0)
+	query.collide_with_areas = true
+	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty():
+		return ""
+	var collider: Object = hit.get("collider")
+	if collider is Node:
+		var node := collider as Node
+		while node != null and node != world_root:
+			if node.is_in_group("interactable"):
+				return str(node.name)
+			node = node.get_parent()
+	return ""
 
-	panel = PanelContainer.new()
-	panel.position = Vector2(0, 0)
-	panel.size = Vector2(460, 480)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
-	panel.visible = false
-	panel.add_theme_stylebox_override("panel", _style(Color("#202427"), Color("#a18b68"), 2, 8))
-	root.add_child(panel)
-	panel_content = VBoxContainer.new()
-	panel_content.add_theme_constant_override("separation", 12)
-	panel.add_child(panel_content)
+func _ground_point(screen_pos: Vector2) -> Vector3:
+	var origin := camera.project_ray_origin(screen_pos)
+	var direction := camera.project_ray_normal(screen_pos)
+	if absf(direction.y) < 0.0001:
+		return Vector3.INF
+	var distance := -origin.y / direction.y
+	if distance < 0.0:
+		return Vector3.INF
+	var point := origin + direction * distance
+	point.x = clampf(point.x, -15.5, 15.5)
+	point.z = clampf(point.z, -12.0, 12.0)
+	return point
 
-func _style(bg: Color, border: Color, border_size: int, radius: int) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.border_color = border
-	s.set_border_width_all(border_size)
-	s.set_corner_radius_all(radius)
-	s.content_margin_left = 18
-	s.content_margin_right = 18
-	s.content_margin_top = 14
-	s.content_margin_bottom = 14
-	return s
-
-func _refresh_hud() -> void:
-	if is_instance_valid(status_label):
-		status_label.text = _status_text()
-	if is_instance_valid(objective_label):
-		objective_label.text = "CURRENT TASK  /  " + ("Report what Mara told you" if flags.get("mara_truth", false) else "Find Mara Venn by the waterfront")
-
-func _status_text() -> String:
-	return "₡ %d   •   %d items   •   %d journal entries" % [money, inventory.size(), journal.size()]
-
-func _target_at(pos: Vector2) -> String:
-	var closest := ""
-	var best := 42.0
-	for key in people:
-		var p: Vector2 = people[key]["position"]
-		var d := p.distance_to(pos)
-		if d < best:
-			best = d
-			closest = key
-	return closest
+func _target_position(target: String) -> Vector3:
+	return (npc_nodes[target] as Node3D).global_position
 
 func _nearest_target() -> String:
 	var closest := ""
 	var best := INTERACTION_RANGE
 	for key in people:
-		var d: float = player.global_position.distance_to(people[key]["position"])
-		if d < best:
-			best = d
+		var distance: float = player.global_position.distance_to(_target_position(key))
+		if distance < best:
+			best = distance
 			closest = key
 	return closest
 
@@ -241,9 +268,13 @@ func _interact_nearest() -> void:
 		_try_interact(target)
 
 func _try_interact(target: String) -> void:
-	var target_pos: Vector2 = people[target]["position"]
+	var target_pos := _target_position(target)
 	if player.global_position.distance_to(target_pos) > INTERACTION_RANGE:
-		player.set_destination(target_pos + Vector2(36, 28))
+		var direction := player.global_position - target_pos
+		direction.y = 0.0
+		if direction.length_squared() < 0.01:
+			direction = Vector3.RIGHT
+		player.set_destination(target_pos + direction.normalized() * 1.8)
 		show_toast("Moving closer to " + str(people[target]["name"]) + "…")
 		return
 	_start_dialogue(target)
@@ -282,7 +313,6 @@ func _start_dialogue(target: String) -> void:
 func _open_dialogue(speaker: String, lines: Array[String], choices: Array[Dictionary]) -> void:
 	current_speaker = speaker
 	dialogue_lines = lines
-	current_line = 0
 	dialogue_choices = choices
 	_show_dialogue_panel()
 
@@ -302,18 +332,17 @@ func _show_dialogue_panel() -> void:
 	body.add_theme_font_size_override("font_size", 17)
 	body.add_theme_color_override("font_color", Color("#e1ded3"))
 	panel_content.add_child(body)
-	var separator := HSeparator.new()
-	panel_content.add_child(separator)
+	panel_content.add_child(HSeparator.new())
 	for choice in dialogue_choices:
-		var b := Button.new()
-		b.text = str(choice["text"])
-		b.custom_minimum_size.y = 38
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.add_theme_color_override("font_color", Color("#e3ddcb"))
-		b.add_theme_stylebox_override("normal", _style(Color("#303638"), Color("#5e625c"), 1, 3))
-		b.add_theme_stylebox_override("hover", _style(Color("#414640"), Color("#d0b783"), 1, 3))
-		b.pressed.connect(_choose_dialogue.bind(str(choice["action"])))
-		panel_content.add_child(b)
+		var button := Button.new()
+		button.text = str(choice["text"])
+		button.custom_minimum_size.y = 38
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.add_theme_color_override("font_color", Color("#e3ddcb"))
+		button.add_theme_stylebox_override("normal", _style(Color("#303638"), Color("#5e625c"), 1, 3))
+		button.add_theme_stylebox_override("hover", _style(Color("#414640"), Color("#d0b783"), 1, 3))
+		button.pressed.connect(_choose_dialogue.bind(str(choice["action"])))
+		panel_content.add_child(button)
 	var close_button := Button.new()
 	close_button.text = "Close  [Esc]"
 	close_button.pressed.connect(_close_panel)
@@ -322,15 +351,13 @@ func _show_dialogue_panel() -> void:
 func _choose_dialogue(action: String) -> void:
 	match action:
 		"perception":
-			var success := _skill_check("Perception", 4, 2)
-			if success:
+			if _skill_check("Perception", 4, 2):
 				_add_journal_once("Mara seemed frightened when she mentioned the municipal ledger.")
 				show_toast("SUCCESS — you noticed fear beneath her composure.")
 			else:
 				show_toast("FAILURE — her expression gives nothing away.")
 		"rhetoric":
-			var success := _skill_check("Rhetoric", 3, 2)
-			if success:
+			if _skill_check("Rhetoric", 3, 2):
 				flags["mara_truth"] = true
 				_add_journal_once("Mara says a clerk took a ledger to the old municipal office.")
 				_add_journal_once("The waterfront closure was ordered before sunrise.")
@@ -341,8 +368,7 @@ func _choose_dialogue(action: String) -> void:
 				_add_journal_once("Mara refused to name the person who ordered the closure.")
 				show_toast("FAILURE — you pushed too hard. Try another approach.")
 		"dream":
-			var success := _skill_check("Inland Empire", 3, 2)
-			if success:
+			if _skill_check("Inland Empire", 3, 2):
 				_add_journal_once("A dream-image: a black bird above a locked door.")
 				show_toast("SUCCESS — a strange intuition becomes a thought.")
 			else:
@@ -444,15 +470,8 @@ func show_toast(message: String) -> void:
 		status_label.text = message
 
 func save_game() -> void:
-	var data := {
-		"version": 1,
-		"player_position": [player.global_position.x, player.global_position.y],
-		"skills": skills,
-		"money": money,
-		"inventory": inventory,
-		"journal": journal,
-		"flags": flags
-	}
+	var pos := player.global_position
+	var data := {"version": 2, "player_position": [pos.x, pos.y, pos.z], "skills": skills, "money": money, "inventory": inventory, "journal": journal, "flags": flags}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file == null:
 		show_toast("SAVE FAILED: " + error_string(FileAccess.get_open_error()))
@@ -475,9 +494,12 @@ func load_game() -> void:
 		show_toast("Save file is invalid.")
 		return
 	var data: Dictionary = parsed
-	var pos: Array = data.get("player_position", [540.0, 470.0])
-	if pos.size() >= 2:
-		player.global_position = Vector2(float(pos[0]), float(pos[1]))
+	var pos: Array = data.get("player_position", [0.0, 0.0, 4.0])
+	if pos.size() >= 3:
+		player.global_position = Vector3(float(pos[0]), float(pos[1]), float(pos[2]))
+		player.destination = player.global_position
+	elif pos.size() >= 2:
+		player.global_position = Vector3(float(pos[0]) / 45.0 - 16.0, 0.0, float(pos[1]) / 45.0 - 12.0)
 		player.destination = player.global_position
 	skills = data.get("skills", skills)
 	money = int(data.get("money", money))
@@ -486,6 +508,85 @@ func load_game() -> void:
 	flags = data.get("flags", flags)
 	_refresh_hud()
 	show_toast("GAME LOADED")
+
+func _build_ui() -> void:
+	ui_layer = CanvasLayer.new()
+	add_child(ui_layer)
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(root)
+	var top := PanelContainer.new()
+	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	top.offset_bottom = 82
+	top.add_theme_stylebox_override("panel", _style(Color("#191d20"), Color("#6e6b5b"), 1, 0))
+	root.add_child(top)
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 24)
+	top.add_child(top_row)
+	var title := Label.new()
+	title.text = "THE PALE DISTRICT"
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color("#d7c59e"))
+	top_row.add_child(title)
+	var subtitle := Label.new()
+	subtitle.text = "3D NARRATIVE RPG  /  DAY 01"
+	subtitle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	subtitle.add_theme_color_override("font_color", Color("#9da39a"))
+	top_row.add_child(subtitle)
+	var controls := Label.new()
+	controls.text = "WASD move  •  LMB move/interact  •  E talk  •  J journal  •  I inventory  •  C skills  •  F5 save"
+	controls.add_theme_color_override("font_color", Color("#c6c3b7"))
+	top_row.add_child(controls)
+	objective_label = Label.new()
+	objective_label.position = Vector2(28, 106)
+	objective_label.text = "CURRENT TASK  /  Find Mara Venn"
+	objective_label.add_theme_font_size_override("font_size", 16)
+	objective_label.add_theme_color_override("font_color", Color("#e3c994"))
+	root.add_child(objective_label)
+	interaction_hint = Label.new()
+	interaction_hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	interaction_hint.position = Vector2(28, -48)
+	interaction_hint.text = "Click ground to move • Click a person or approach and press E"
+	interaction_hint.add_theme_color_override("font_color", Color("#e3ddcb"))
+	root.add_child(interaction_hint)
+	status_label = Label.new()
+	status_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	status_label.position = Vector2(-330, -45)
+	status_label.size = Vector2(300, 28)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	status_label.add_theme_color_override("font_color", Color("#d6c7a5"))
+	root.add_child(status_label)
+	panel = PanelContainer.new()
+	panel.size = Vector2(460, 480)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	panel.visible = false
+	panel.add_theme_stylebox_override("panel", _style(Color("#202427"), Color("#a18b68"), 2, 8))
+	root.add_child(panel)
+	panel_content = VBoxContainer.new()
+	panel_content.add_theme_constant_override("separation", 12)
+	panel.add_child(panel_content)
+
+func _style(bg: Color, border: Color, border_size: int, radius: int) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(border_size)
+	style.set_corner_radius_all(radius)
+	style.content_margin_left = 18
+	style.content_margin_right = 18
+	style.content_margin_top = 14
+	style.content_margin_bottom = 14
+	return style
+
+func _refresh_hud() -> void:
+	if is_instance_valid(status_label):
+		status_label.text = _status_text()
+	if is_instance_valid(objective_label):
+		objective_label.text = "CURRENT TASK  /  " + ("Report what Mara told you" if flags.get("mara_truth", false) else "Find Mara Venn by the waterfront")
+
+func _status_text() -> String:
+	return "₡ %d   •   %d items   •   %d journal entries" % [money, inventory.size(), journal.size()]
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel") and current_panel != "":
