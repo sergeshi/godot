@@ -1,34 +1,35 @@
-# The Pale District — Narrative RPG Template
+# The Pale District — 3D Narrative RPG Template
 
-A Godot 4.7 starter project for a top-down, dialogue-driven detective RPG. The project is an original prototype inspired by broad genre conventions (isometric narrative RPGs, reactive dialogue, skill checks and environmental storytelling), not a recreation of any copyrighted game's characters, writing, art or locations.
+A Godot 4.7 starter project for a 3D isometric, dialogue-driven detective RPG. This is an original prototype using broad genre conventions rather than copyrighted characters, writing, art or locations.
 
 ## Included in this vertical slice
 
-- Playable top-down character with WASD / arrow-key movement and mouse click-to-move.
-- Clickable NPCs, interaction range and E-to-talk interaction.
+- A 3D isometric waterfront blockout with water, road, pavement, kiosk and placeholder buildings.
+- A perspective-free orthographic camera that follows the player from an elevated angle.
+- 3D CharacterBody movement with WASD / arrow keys and click-to-move across the ground.
+- Three 3D NPCs with name labels, hover highlighting and click-to-approach / talk interaction.
 - Branching conversations and contextual choices.
 - Skill checks using 2d6 + skill rank + modifier, with success/failure branches.
 - Character sheet with six example skills.
 - Inventory and currency; a simple buy interaction.
 - Journal with duplicate-safe clue entries and an evolving objective.
 - JSON save/load to `user://pale_district_save.json` (F5 saves, F9 loads).
-- Procedurally drawn placeholder street blockout and on-screen control hints.
-- A single test scene configured as the project's main scene.
+- Overcast-style directional lighting, shadows and a muted palette.
+- A headless GitHub Actions smoke test for import and scene startup.
 
 ## Run
 
 1. Install Godot 4.7 or a compatible Godot 4.x release.
-2. Clone/download this repository.
+2. Download/clone the `feature/narrative-rpg-template` branch.
 3. Open `project.godot` in Godot.
-4. Press F6 to run the current scene or F5 to run the project.
+4. Press F5 to run the project.
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
-| WASD / arrows | Move |
+| WASD / arrows | Move in world space |
 | Left-click ground | Walk to point |
-| Right-click | Walk to point |
 | Left-click NPC | Approach or talk |
 | E | Talk to nearest NPC |
 | J | Journal |
@@ -41,18 +42,19 @@ A Godot 4.7 starter project for a top-down, dialogue-driven detective RPG. The p
 ## Folder layout
 
 - `project.godot` — project settings and input map.
-- `scenes/main.tscn` — test scene and player node.
-- `scripts/game.gd` — world blockout, UI, interactions, dialogue, checks, journal, inventory and persistence.
-- `scripts/player.gd` — movement controller and placeholder character drawing.
+- `scenes/main.tscn` — 3D test scene and player.
+- `scripts/game.gd` — 3D blockout, camera, NPCs, UI, dialogue, checks, journal, inventory and persistence.
+- `scripts/player.gd` — 3D CharacterBody movement and click-to-move.
 - `icon.svg` — project icon.
+- `.github/workflows/godot-smoke-test.yml` — headless import and scene-start check.
 
-## Suggested next production steps
+## Production roadmap
 
-1. Replace the procedural blockout with authored TileMapLayer / Node2D scenes and collision geometry.
-2. Extract dialogue, quest, inventory, character and save systems into reusable resources/autoloads.
-3. Move dialogue content into JSON or custom Resources; add conditions, effects, skill gates and localization.
-4. Add portrait illustrations, animated character sprites, sound, music, lighting and post-processing.
-5. Add navigation/collision around buildings, accessible interaction prompts, controller support and automated tests.
-6. Build a dialogue graph editor and a quest-state inspector for authoring content.
+1. Replace placeholder geometry with authored modular 3D models, PBR materials, decals and props.
+2. Add NavigationRegion3D / NavigationAgent3D, proper collision layout, slopes, stairs and obstacle-aware click-to-move.
+3. Extract dialogue, quest, inventory, character and save systems into reusable resources/autoloads.
+4. Add a thought cabinet, relationship state, reactive checks, conditional dialogue graph and quest-state inspector.
+5. Add portrait illustrations, facial/body animation, voice, ambience, music, weather and post-processing.
+6. Add dialogue graph editor, controller support, accessibility options and automated gameplay tests.
 
-This is a feature-complete *starter vertical slice*, not a finished commercial game. Art and dialogue are placeholders intended to make the core loop testable immediately.
+This is a playable *starter vertical slice*, not a finished commercial game. The scene currently uses procedural placeholder geometry and simplified movement; visual and interaction polish remain on the roadmap.
